@@ -3,9 +3,7 @@ package com.steadypower.app;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
@@ -15,16 +13,13 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
-import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-
-import org.json.JSONArray;
-import org.json.JSONObject;
 
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -38,8 +33,11 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     private static final int REQ_NOTIFICATIONS = 20;
     private static final int REQ_EXPORT = 21;
-    private static final String PREFS_HISTORY = "steadypower_history";
-    private static final String KEY_HISTORY = "records";
+
+    private FrameLayout pageHost;
+    private Button homeTab;
+    private Button recordsTab;
+    private boolean homeVisible = true;
 
     private TextView valueText;
     private TextView valueLabel;
@@ -51,13 +49,12 @@ public class MainActivity extends Activity {
     private Button exportButton;
     private PowerCurveView curveView;
     private PowerHistogramView histogramView;
-    private LinearLayout historyList;
     private boolean currentRunSaved = false;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable uiTicker = new Runnable() {
         @Override public void run() {
-            updateUi();
+            if (homeVisible) updateUi();
             handler.postDelayed(this, 1000L);
         }
     };
@@ -65,9 +62,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(buildUi());
-        refreshHistory();
-        updateUi();
+        setContentView(buildShell());
+        showHomePage();
     }
 
     @Override
@@ -83,22 +79,52 @@ public class MainActivity extends Activity {
         super.onPause();
     }
 
-    private View buildUi() {
+    private View buildShell() {
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.VERTICAL);
+        shell.setBackgroundColor(Color.rgb(246, 247, 249));
+
+        pageHost = new FrameLayout(this);
+        shell.addView(pageHost, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        LinearLayout nav = new LinearLayout(this);
+        nav.setOrientation(LinearLayout.HORIZONTAL);
+        nav.setPadding(dp(8), dp(4), dp(8), dp(6));
+        nav.setBackgroundColor(Color.WHITE);
+
+        homeTab = new Button(this);
+        homeTab.setText("主页");
+        homeTab.setOnClickListener(v -> showHomePage());
+        recordsTab = new Button(this);
+        recordsTab.setText("测试记录");
+        recordsTab.setOnClickListener(v -> showRecordsPage());
+        nav.addView(homeTab, navWeight());
+        nav.addView(recordsTab, navWeight());
+        shell.addView(nav, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(60)));
+
+        shell.setOnApplyWindowInsetsListener((v, insets) -> {
+            int top = insets.getSystemWindowInsetTop() + dp(10);
+            int bottom = insets.getSystemWindowInsetBottom();
+            shell.setPadding(0, top, 0, bottom);
+            return insets;
+        });
+        shell.requestApplyInsets();
+        return shell;
+    }
+
+    private void showHomePage() {
+        homeVisible = true;
+        setTabState(true);
+        pageHost.removeAllViews();
+
         ScrollView scroll = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18), dp(24), dp(18), dp(32));
+        root.setPadding(dp(18), dp(8), dp(18), dp(28));
         root.setBackgroundColor(Color.rgb(246, 247, 249));
         scroll.addView(root);
-
-        // Android 15+ 强制 edge-to-edge 后内容可能进入状态栏区域；使用系统 inset 留出真实间距。
-        scroll.setOnApplyWindowInsetsListener((v, insets) -> {
-            int top = dp(18) + insets.getSystemWindowInsetTop();
-            int bottom = dp(32) + insets.getSystemWindowInsetBottom();
-            root.setPadding(dp(18), top, dp(18), bottom);
-            return insets;
-        });
-        scroll.requestApplyInsets();
 
         TextView title = text("SteadyPower", 28, Color.rgb(25, 25, 28));
         title.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -140,9 +166,10 @@ public class MainActivity extends Activity {
         exportButton = new Button(this);
         exportButton.setText("导出当前测试 CSV");
         exportButton.setOnClickListener(v -> exportCsv());
-        root.addView(exportButton, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
-        ((LinearLayout.LayoutParams) exportButton.getLayoutParams()).bottomMargin = dp(14);
+        LinearLayout.LayoutParams exportParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
+        exportParams.bottomMargin = dp(14);
+        root.addView(exportButton, exportParams);
 
         LinearLayout statsCard = card();
         TextView statsTitle = text("统计", 18, Color.rgb(30, 30, 34));
@@ -152,18 +179,6 @@ public class MainActivity extends Activity {
         statsText.setPadding(0, dp(10), 0, 0);
         statsCard.addView(statsText);
         root.addView(statsCard, matchWrapMarginBottom(14));
-
-        LinearLayout historyCard = card();
-        TextView historyTitle = text("测试记录", 18, Color.rgb(30, 30, 34));
-        historyTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        historyCard.addView(historyTitle);
-        TextView historyNote = text("测试停止后点“保存记录”，输入例如“1000Hz，抖音测试”；中位功耗会自动追加到标题。", 12, Color.DKGRAY);
-        historyNote.setPadding(0, dp(4), 0, dp(8));
-        historyCard.addView(historyNote);
-        historyList = new LinearLayout(this);
-        historyList.setOrientation(LinearLayout.VERTICAL);
-        historyCard.addView(historyList, matchWrap());
-        root.addView(historyCard, matchWrapMarginBottom(14));
 
         LinearLayout curveCard = card();
         TextView curveTitle = text("原始功耗曲线", 18, Color.rgb(30, 30, 34));
@@ -191,14 +206,159 @@ public class MainActivity extends Activity {
                 "读数说明\n" +
                 "• 典型功耗 = 全部有效采样的中位数，对偶发尖峰不敏感。\n" +
                 "• 实际平均 = 全部有效采样的算术平均，保留真实尖峰。\n" +
-                "• 保存记录只保存本次摘要，原始逐秒数据仍可单独导出 CSV。\n" +
+                "• 保存记录会保存本次完整逐秒数据，可在“测试记录”中点开查看曲线和直方图。\n" +
                 "• 功率按 |电池电流| × 电池电压计算，属于电池端估算值。\n" +
                 "• 正在充电时，电池净电流不能直接代表整机耗电，不建议测试。",
                 13, Color.DKGRAY);
         noteCard.addView(note);
         root.addView(noteCard);
 
-        return scroll;
+        pageHost.addView(scroll);
+        updateUi();
+    }
+
+    private void showRecordsPage() {
+        homeVisible = false;
+        setTabState(false);
+        pageHost.removeAllViews();
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18), dp(8), dp(18), dp(28));
+        root.setBackgroundColor(Color.rgb(246, 247, 249));
+        scroll.addView(root);
+
+        TextView title = text("测试记录", 28, Color.rgb(25, 25, 28));
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        root.addView(title);
+        TextView subtitle = text("点击任意记录查看完整统计、曲线和功耗分布。", 13, Color.DKGRAY);
+        subtitle.setPadding(0, dp(4), 0, dp(18));
+        root.addView(subtitle);
+
+        List<RecordStore.Record> records = RecordStore.loadRecords(this);
+        if (records.isEmpty()) {
+            LinearLayout empty = card();
+            TextView e = text("还没有保存的测试记录。", 15, Color.DKGRAY);
+            empty.addView(e);
+            root.addView(empty);
+        } else {
+            SimpleDateFormat fmt = new SimpleDateFormat("MM-dd HH:mm", Locale.getDefault());
+            for (RecordStore.Record record : records) {
+                LinearLayout item = card();
+                item.setClickable(true);
+                item.setFocusable(true);
+                TextView itemTitle = text(record.displayTitle(), 17, Color.rgb(28, 28, 32));
+                itemTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+                item.addView(itemTitle);
+                TextView summary = text(String.format(Locale.US,
+                        "平均 %.3f W · %d:%02d · %s",
+                        record.mean,
+                        record.durationSec / 60,
+                        record.durationSec % 60,
+                        fmt.format(new Date(record.savedAt))),
+                        13, Color.DKGRAY);
+                summary.setPadding(0, dp(5), 0, 0);
+                item.addView(summary);
+                item.setOnClickListener(v -> showRecordDetail(record));
+                root.addView(item, matchWrapMarginBottom(10));
+            }
+        }
+
+        pageHost.addView(scroll);
+    }
+
+    private void showRecordDetail(RecordStore.Record record) {
+        homeVisible = false;
+        setTabState(false);
+        pageHost.removeAllViews();
+
+        List<PowerRepository.Sample> samples = RecordStore.loadSamples(this, record);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18), dp(8), dp(18), dp(28));
+        root.setBackgroundColor(Color.rgb(246, 247, 249));
+        scroll.addView(root);
+
+        Button back = new Button(this);
+        back.setText("← 返回测试记录");
+        back.setOnClickListener(v -> showRecordsPage());
+        root.addView(back, matchWrapMarginBottom(10));
+
+        TextView title = text(record.displayTitle(), 24, Color.rgb(25, 25, 28));
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        root.addView(title);
+        TextView saved = text(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                .format(new Date(record.savedAt)), 12, Color.DKGRAY);
+        saved.setPadding(0, dp(4), 0, dp(16));
+        root.addView(saved);
+
+        LinearLayout statsCard = card();
+        TextView statsTitle = text("统计", 18, Color.rgb(30, 30, 34));
+        statsTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        statsCard.addView(statsTitle);
+        TextView detailStats = text(String.format(Locale.US,
+                "典型功耗（中位数）  %.3f W\n" +
+                "实际平均功耗        %.3f W\n" +
+                "最低 / 最高         %.3f / %.3f W\n" +
+                "采样数              %d\n" +
+                "测试时长            %d:%02d",
+                record.median, record.mean, record.min, record.max,
+                record.count, record.durationSec / 60, record.durationSec % 60),
+                15, Color.DKGRAY);
+        detailStats.setPadding(0, dp(10), 0, 0);
+        statsCard.addView(detailStats);
+        root.addView(statsCard, matchWrapMarginBottom(14));
+
+        LinearLayout curveCard = card();
+        TextView curveTitle = text("原始功耗曲线", 18, Color.rgb(30, 30, 34));
+        curveTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        curveCard.addView(curveTitle);
+        PowerCurveView detailCurve = new PowerCurveView(this);
+        detailCurve.setData(samples);
+        curveCard.addView(detailCurve, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(240)));
+        root.addView(curveCard, matchWrapMarginBottom(14));
+
+        LinearLayout histCard = card();
+        TextView histTitle = text("功耗直方图", 18, Color.rgb(30, 30, 34));
+        histTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        histCard.addView(histTitle);
+        PowerHistogramView detailHist = new PowerHistogramView(this);
+        detailHist.setData(samples);
+        histCard.addView(detailHist, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(270)));
+        root.addView(histCard, matchWrapMarginBottom(14));
+
+        if (samples.isEmpty()) {
+            TextView missing = text("这条记录的逐秒数据文件不存在或无法读取。", 13, Color.rgb(180, 55, 45));
+            missing.setPadding(0, 0, 0, dp(10));
+            root.addView(missing);
+        }
+
+        Button delete = new Button(this);
+        delete.setText("删除这条记录");
+        delete.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("删除记录")
+                .setMessage("删除后，这条记录及其完整曲线数据都会被移除。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("删除", (d, w) -> {
+                    RecordStore.delete(this, record.id);
+                    showRecordsPage();
+                })
+                .show());
+        root.addView(delete, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
+
+        pageHost.addView(scroll);
+    }
+
+    private void setTabState(boolean home) {
+        if (homeTab == null || recordsTab == null) return;
+        homeTab.setEnabled(!home);
+        recordsTab.setEnabled(home);
     }
 
     private void startTest() {
@@ -225,6 +385,7 @@ public class MainActivity extends Activity {
     }
 
     private void updateUi() {
+        if (!homeVisible || valueText == null) return;
         List<PowerRepository.Sample> samples = PowerRepository.snapshot();
         boolean running = PowerRepository.isRunning();
         startButton.setEnabled(!running);
@@ -279,7 +440,7 @@ public class MainActivity extends Activity {
     private TestStats calculateStats(List<PowerRepository.Sample> samples) {
         TestStats out = new TestStats();
         if (samples.isEmpty()) return out;
-        double sum = 0;
+        double sum = 0.0;
         out.min = Double.POSITIVE_INFINITY;
         out.max = Double.NEGATIVE_INFINITY;
         for (PowerRepository.Sample sample : samples) {
@@ -308,7 +469,6 @@ public class MainActivity extends Activity {
         if (samples.isEmpty() || PowerRepository.isRunning()) return;
 
         EditText input = new EditText(this);
-        input.setHint("例如：1000Hz，抖音测试");
         input.setSingleLine(true);
         int pad = dp(20);
         LinearLayout holder = new LinearLayout(this);
@@ -317,148 +477,24 @@ public class MainActivity extends Activity {
 
         new AlertDialog.Builder(this)
                 .setTitle("保存测试记录")
-                .setMessage(String.format(Locale.US, "本次中位功耗 %.3f W\n功耗数值会自动追加到标题。", median(samples)))
+                .setMessage(String.format(Locale.US, "本次中位功耗 %.3f W", median(samples)))
                 .setView(holder)
                 .setNegativeButton("取消", null)
                 .setPositiveButton("保存", (dialog, which) -> {
                     String name = input.getText().toString().trim();
-                    if (name.isEmpty()) name = "未命名测试";
                     saveCurrentRecord(name, samples);
                 })
                 .show();
     }
 
     private void saveCurrentRecord(String name, List<PowerRepository.Sample> samples) {
-        TestStats stats = calculateStats(samples);
         try {
-            SharedPreferences prefs = getSharedPreferences(PREFS_HISTORY, Context.MODE_PRIVATE);
-            JSONArray array;
-            try {
-                array = new JSONArray(prefs.getString(KEY_HISTORY, "[]"));
-            } catch (Exception ignored) {
-                array = new JSONArray();
-            }
-
-            JSONObject record = new JSONObject();
-            record.put("id", System.currentTimeMillis());
-            record.put("name", name);
-            record.put("savedAt", System.currentTimeMillis());
-            record.put("median", stats.median);
-            record.put("mean", stats.mean);
-            record.put("min", stats.min);
-            record.put("max", stats.max);
-            record.put("count", stats.count);
-            record.put("durationSec", stats.durationSec);
-            array.put(record);
-
-            // 摘要很小，但仍限制最多 100 条，避免无限增长。
-            if (array.length() > 100) {
-                JSONArray trimmed = new JSONArray();
-                for (int i = array.length() - 100; i < array.length(); i++) trimmed.put(array.get(i));
-                array = trimmed;
-            }
-
-            prefs.edit().putString(KEY_HISTORY, array.toString()).apply();
+            RecordStore.Record record = RecordStore.save(this, name, samples);
             currentRunSaved = true;
-            refreshHistory();
             updateUi();
-            Toast.makeText(this,
-                    String.format(Locale.US, "已保存：%s · %.3f W", name, stats.median),
-                    Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "已保存：" + record.displayTitle(), Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
-            Toast.makeText(this, "保存记录失败：" + e.getClass().getSimpleName(), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private void refreshHistory() {
-        if (historyList == null) return;
-        historyList.removeAllViews();
-        List<HistoryRecord> records = loadHistory();
-        if (records.isEmpty()) {
-            TextView empty = text("暂无保存记录", 13, Color.GRAY);
-            empty.setPadding(0, dp(6), 0, dp(4));
-            historyList.addView(empty);
-            return;
-        }
-
-        for (HistoryRecord r : records) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, dp(7), 0, dp(7));
-
-            LinearLayout info = new LinearLayout(this);
-            info.setOrientation(LinearLayout.VERTICAL);
-            TextView name = text(String.format(Locale.US, "%s · %.3f W", r.name, r.median),
-                    15, Color.rgb(25, 25, 28));
-            name.setTypeface(null, android.graphics.Typeface.BOLD);
-            info.addView(name);
-            String time = new SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(new Date(r.savedAt));
-            TextView detail = text(String.format(Locale.US,
-                    "平均 %.3f W · %d:%02d · %s",
-                    r.mean, r.durationSec / 60, r.durationSec % 60, time), 12, Color.DKGRAY);
-            detail.setPadding(0, dp(3), 0, 0);
-            info.addView(detail);
-            row.addView(info, new LinearLayout.LayoutParams(0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-            Button delete = new Button(this);
-            delete.setText("删除");
-            delete.setTextSize(11);
-            delete.setOnClickListener(v -> confirmDeleteRecord(r.id, r.name));
-            row.addView(delete, new LinearLayout.LayoutParams(dp(72), dp(42)));
-            historyList.addView(row, matchWrap());
-
-            View divider = new View(this);
-            divider.setBackgroundColor(Color.rgb(235, 236, 239));
-            historyList.addView(divider, new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
-        }
-    }
-
-    private List<HistoryRecord> loadHistory() {
-        ArrayList<HistoryRecord> out = new ArrayList<>();
-        SharedPreferences prefs = getSharedPreferences(PREFS_HISTORY, Context.MODE_PRIVATE);
-        try {
-            JSONArray array = new JSONArray(prefs.getString(KEY_HISTORY, "[]"));
-            for (int i = array.length() - 1; i >= 0; i--) {
-                JSONObject o = array.getJSONObject(i);
-                HistoryRecord r = new HistoryRecord();
-                r.id = o.optLong("id", 0L);
-                r.name = o.optString("name", "未命名测试");
-                r.savedAt = o.optLong("savedAt", r.id);
-                r.median = o.optDouble("median", 0.0);
-                r.mean = o.optDouble("mean", 0.0);
-                r.durationSec = o.optLong("durationSec", 0L);
-                out.add(r);
-            }
-        } catch (Exception ignored) {
-        }
-        return out;
-    }
-
-    private void confirmDeleteRecord(long id, String name) {
-        new AlertDialog.Builder(this)
-                .setTitle("删除记录")
-                .setMessage("确定删除“" + name + "”吗？")
-                .setNegativeButton("取消", null)
-                .setPositiveButton("删除", (dialog, which) -> deleteRecord(id))
-                .show();
-    }
-
-    private void deleteRecord(long id) {
-        SharedPreferences prefs = getSharedPreferences(PREFS_HISTORY, Context.MODE_PRIVATE);
-        try {
-            JSONArray old = new JSONArray(prefs.getString(KEY_HISTORY, "[]"));
-            JSONArray next = new JSONArray();
-            for (int i = 0; i < old.length(); i++) {
-                JSONObject o = old.getJSONObject(i);
-                if (o.optLong("id", -1L) != id) next.put(o);
-            }
-            prefs.edit().putString(KEY_HISTORY, next.toString()).apply();
-            refreshHistory();
-        } catch (Exception e) {
-            Toast.makeText(this, "删除失败", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "保存失败：" + e.getClass().getSimpleName(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -525,6 +561,12 @@ public class MainActivity extends Activity {
         return p;
     }
 
+    private LinearLayout.LayoutParams navWeight() {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(50), 1f);
+        p.setMargins(dp(3), 0, dp(3), 0);
+        return p;
+    }
+
     private LinearLayout.LayoutParams matchWrap() {
         return new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -540,21 +582,12 @@ public class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    private static class TestStats {
+    private static final class TestStats {
         double median;
         double mean;
         double min;
         double max;
         int count;
-        long durationSec;
-    }
-
-    private static class HistoryRecord {
-        long id;
-        String name;
-        long savedAt;
-        double median;
-        double mean;
         long durationSec;
     }
 }
