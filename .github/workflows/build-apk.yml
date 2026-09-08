@@ -27,11 +27,11 @@ jobs:
         run: gradle :app:assembleDebug --no-daemon
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk SteadyPower-v0.1.1.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk SteadyPower-v0.2.0.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: SteadyPower-v0.1.1
-          path: SteadyPower-v0.1.1.apk
+          name: SteadyPower-v0.2.0
+          path: SteadyPower-v0.2.0.apk
           if-no-files-found: error
