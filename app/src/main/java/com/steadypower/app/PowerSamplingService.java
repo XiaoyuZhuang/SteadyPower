@@ -51,7 +51,7 @@ public class PowerSamplingService extends Service {
 
     private void sampleOnce() {
         try {
-            long currentUa = batteryManager.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
+            long rawCurrent = batteryManager.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
             Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
             if (battery == null) {
                 PowerRepository.setLastError("无法读取电池状态");
@@ -63,13 +63,29 @@ public class PowerSamplingService extends Service {
             boolean charging = status == BatteryManager.BATTERY_STATUS_CHARGING
                     || status == BatteryManager.BATTERY_STATUS_FULL;
 
-            if (currentUa == Long.MIN_VALUE || voltageMv <= 0) {
+            if (rawCurrent == Long.MIN_VALUE || voltageMv <= 0) {
                 PowerRepository.setLastError("设备未提供可用的瞬时电流或电压数据");
                 return;
             }
 
-            double currentA = Math.abs(currentUa) / 1_000_000.0;
             double voltageV = voltageMv / 1000.0;
+
+            // Android API specifies microamps, but a few OEM/ROM combinations return milliamps.
+            // If the nominal microamp interpretation gives an implausibly tiny screen-on power
+            // while the milliamp interpretation remains within a normal phone discharge range,
+            // normalize the value to microamps before calculating power.
+            long normalizedCurrentUa = rawCurrent;
+            double powerIfUa = (Math.abs(rawCurrent) / 1_000_000.0) * voltageV;
+            double powerIfMa = (Math.abs(rawCurrent) / 1_000.0) * voltageV;
+            if (rawCurrent != 0
+                    && Math.abs(rawCurrent) < 10_000
+                    && powerIfUa < 0.05
+                    && powerIfMa >= 0.05
+                    && powerIfMa <= 15.0) {
+                normalizedCurrentUa = rawCurrent * 1000L;
+            }
+
+            double currentA = Math.abs(normalizedCurrentUa) / 1_000_000.0;
             double powerW = currentA * voltageV;
             if (!Double.isFinite(powerW) || currentA > 20.0 || voltageV > 6.0 || powerW > 100.0) {
                 PowerRepository.setLastError("检测到明显无效的传感器读数");
@@ -79,7 +95,7 @@ public class PowerSamplingService extends Service {
             long nowElapsed = SystemClock.elapsedRealtime();
             long elapsed = Math.max(0L, nowElapsed - PowerRepository.getStartElapsedRealtime());
             PowerRepository.add(new PowerRepository.Sample(
-                    System.currentTimeMillis(), elapsed, currentUa, voltageMv, powerW, charging));
+                    System.currentTimeMillis(), elapsed, normalizedCurrentUa, voltageMv, powerW, charging));
             PowerRepository.setLastError("");
         } catch (Throwable t) {
             PowerRepository.setLastError("采样失败：" + t.getClass().getSimpleName());
