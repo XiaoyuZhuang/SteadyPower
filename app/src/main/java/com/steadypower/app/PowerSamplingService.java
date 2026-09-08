@@ -1,6 +1,5 @@
 package com.steadypower.app;
 
-import android.app.BatteryManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -8,6 +7,7 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.SystemClock;
