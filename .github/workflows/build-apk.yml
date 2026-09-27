@@ -6,6 +6,8 @@ on:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
@@ -35,5 +37,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SteadyPower-v0.4.0
-          path: SteadyPower-v0.3.0.apk
+          path: SteadyPower-v0.4.0.apk
           if-no-files-found: error
