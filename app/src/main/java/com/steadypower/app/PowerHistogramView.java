@@ -16,17 +16,28 @@ public class PowerHistogramView extends View {
     private final Paint barPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint gridPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private boolean darkMode;
 
     public PowerHistogramView(Context context) { super(context); init(); }
     public PowerHistogramView(Context context, AttributeSet attrs) { super(context, attrs); init(); }
 
     private void init() {
         barPaint.setColor(Color.rgb(63, 133, 79));
-        textPaint.setColor(Color.DKGRAY);
         textPaint.setTextSize(dp(11));
-        gridPaint.setColor(Color.rgb(225, 225, 225));
         gridPaint.setStrokeWidth(dp(1));
-        setBackgroundColor(Color.WHITE);
+        applyColors();
+    }
+
+    public void setDarkMode(boolean darkMode) {
+        this.darkMode = darkMode;
+        applyColors();
+        invalidate();
+    }
+
+    private void applyColors() {
+        textPaint.setColor(darkMode ? Color.rgb(190, 193, 200) : Color.DKGRAY);
+        gridPaint.setColor(darkMode ? Color.rgb(65, 68, 74) : Color.rgb(225, 225, 225));
+        setBackgroundColor(darkMode ? Color.rgb(31, 33, 37) : Color.WHITE);
     }
 
     public void setData(List<PowerRepository.Sample> samples) {

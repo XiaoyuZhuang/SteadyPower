@@ -12,17 +12,22 @@ import android.os.Build;
 import android.os.IBinder;
 import android.os.SystemClock;
 
-import java.util.concurrent.ScheduledExecutorService;
+import java.util.List;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public class PowerSamplingService extends Service {
     public static final String ACTION_START = "com.steadypower.app.START";
+    public static final String EXTRA_AUTO_STOP_MS = "auto_stop_ms";
+    public static final String EXTRA_AUTO_SAVE_NAME = "auto_save_name";
+
     private static final String CHANNEL_ID = "steadypower_sampling";
     private static final int NOTIFICATION_ID = 1001;
 
     private ScheduledExecutorService scheduler;
     private BatteryManager batteryManager;
+    private long timedTestDurationMs;
 
     @Override
     public void onCreate() {
@@ -37,16 +42,47 @@ public class PowerSamplingService extends Service {
             return START_NOT_STICKY;
         }
 
-        startForeground(NOTIFICATION_ID, buildNotification());
-
         if (scheduler != null && !scheduler.isShutdown()) {
             return START_NOT_STICKY;
         }
 
-        PowerRepository.start(SystemClock.elapsedRealtime());
+        timedTestDurationMs = Math.max(0L, intent.getLongExtra(EXTRA_AUTO_STOP_MS, 0L));
+        String autoSaveName = intent.getStringExtra(EXTRA_AUTO_SAVE_NAME);
+        if (autoSaveName == null || autoSaveName.trim().isEmpty()) {
+            autoSaveName = "倒计时测试";
+        }
+        final String recordName = autoSaveName.trim();
+
+        startForeground(NOTIFICATION_ID, buildNotification());
+
+        long startElapsed = SystemClock.elapsedRealtime();
+        PowerRepository.start(startElapsed, timedTestDurationMs);
         scheduler = Executors.newSingleThreadScheduledExecutor();
         scheduler.scheduleAtFixedRate(this::sampleOnce, 0, 1, TimeUnit.SECONDS);
+
+        if (timedTestDurationMs > 0L) {
+            scheduler.schedule(() -> finishTimedTest(recordName),
+                    timedTestDurationMs, TimeUnit.MILLISECONDS);
+        }
         return START_NOT_STICKY;
+    }
+
+    private void finishTimedTest(String recordName) {
+        try {
+            List<PowerRepository.Sample> samples = PowerRepository.snapshot();
+            if (samples.isEmpty()) {
+                PowerRepository.setLastError("倒计时结束，但没有有效采样数据可保存");
+            } else {
+                RecordStore.Record record = RecordStore.save(this, recordName, samples);
+                PowerRepository.markAutoSaved(record.id, record.displayTitle());
+                PowerRepository.setLastError("");
+            }
+        } catch (Exception e) {
+            PowerRepository.setLastError("倒计时结束，自动保存失败：" + e.getClass().getSimpleName());
+        } finally {
+            PowerRepository.stop();
+            stopSelf();
+        }
     }
 
     private void sampleOnce() {
@@ -118,10 +154,13 @@ public class PowerSamplingService extends Service {
         Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? new Notification.Builder(this, CHANNEL_ID)
                 : new Notification.Builder(this);
+        String content = timedTestDurationMs > 0L
+                ? "倒计时测试进行中，结束后将自动保存"
+                : "每秒记录一次电池端功耗";
         return builder
                 .setSmallIcon(com.steadypower.app.R.drawable.ic_stat_power)
                 .setContentTitle("SteadyPower 正在测试")
-                .setContentText("每秒记录一次电池端功耗")
+                .setContentText(content)
                 .setOngoing(true)
                 .setShowWhen(false)
                 .build();

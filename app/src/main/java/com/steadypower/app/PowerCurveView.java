@@ -17,21 +17,32 @@ public class PowerCurveView extends View {
     private final Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint axisPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private boolean darkMode;
 
     public PowerCurveView(Context context) { super(context); init(); }
     public PowerCurveView(Context context, AttributeSet attrs) { super(context, attrs); init(); }
 
     private void init() {
-        gridPaint.setColor(Color.rgb(225, 225, 225));
         gridPaint.setStrokeWidth(dp(1));
         linePaint.setColor(Color.rgb(38, 112, 214));
         linePaint.setStrokeWidth(dp(2));
         linePaint.setStyle(Paint.Style.STROKE);
-        textPaint.setColor(Color.DKGRAY);
         textPaint.setTextSize(dp(11));
-        axisPaint.setColor(Color.GRAY);
         axisPaint.setStrokeWidth(dp(1));
-        setBackgroundColor(Color.WHITE);
+        applyColors();
+    }
+
+    public void setDarkMode(boolean darkMode) {
+        this.darkMode = darkMode;
+        applyColors();
+        invalidate();
+    }
+
+    private void applyColors() {
+        gridPaint.setColor(darkMode ? Color.rgb(65, 68, 74) : Color.rgb(225, 225, 225));
+        textPaint.setColor(darkMode ? Color.rgb(190, 193, 200) : Color.DKGRAY);
+        axisPaint.setColor(darkMode ? Color.rgb(135, 138, 145) : Color.GRAY);
+        setBackgroundColor(darkMode ? Color.rgb(31, 33, 37) : Color.WHITE);
     }
 
     public void setData(List<PowerRepository.Sample> samples) {

@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
@@ -11,13 +12,17 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.text.InputType;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -34,10 +39,25 @@ public class MainActivity extends Activity {
     private static final int REQ_NOTIFICATIONS = 20;
     private static final int REQ_EXPORT = 21;
 
+    private static final String PREFS = "steadypower_settings";
+    private static final String KEY_DARK_MODE = "dark_mode";
+    private static final String KEY_HAPTICS = "haptics";
+    private static final String KEY_COUNTDOWN_MINUTES = "countdown_minutes";
+
+    private static final int PAGE_HOME = 0;
+    private static final int PAGE_RECORDS = 1;
+    private static final int PAGE_DETAIL = 2;
+    private static final int PAGE_SETTINGS = 3;
+
     private FrameLayout pageHost;
     private Button homeTab;
     private Button recordsTab;
+    private Button settingsTab;
     private boolean homeVisible = true;
+    private int currentPage = PAGE_HOME;
+    private boolean darkMode;
+    private boolean hapticsEnabled = true;
+    private long lastAutoSavedRecordId = 0L;
 
     private TextView valueText;
     private TextView valueLabel;
@@ -61,7 +81,16 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        darkMode = prefs.getBoolean(KEY_DARK_MODE, false);
+        hapticsEnabled = prefs.getBoolean(KEY_HAPTICS, true);
+        setTheme(darkMode
+                ? android.R.style.Theme_Material_NoActionBar
+                : android.R.style.Theme_Material_Light_NoActionBar);
+
         super.onCreate(savedInstanceState);
+        getWindow().setStatusBarColor(backgroundColor());
+        getWindow().setNavigationBarColor(cardColor());
         setContentView(buildShell());
         showHomePage();
     }
@@ -82,7 +111,7 @@ public class MainActivity extends Activity {
     private View buildShell() {
         LinearLayout shell = new LinearLayout(this);
         shell.setOrientation(LinearLayout.VERTICAL);
-        shell.setBackgroundColor(Color.rgb(246, 247, 249));
+        shell.setBackgroundColor(backgroundColor());
 
         pageHost = new FrameLayout(this);
         shell.addView(pageHost, new LinearLayout.LayoutParams(
@@ -91,16 +120,20 @@ public class MainActivity extends Activity {
         LinearLayout nav = new LinearLayout(this);
         nav.setOrientation(LinearLayout.HORIZONTAL);
         nav.setPadding(dp(8), dp(4), dp(8), dp(6));
-        nav.setBackgroundColor(Color.WHITE);
+        nav.setBackgroundColor(cardColor());
 
         homeTab = new Button(this);
         homeTab.setText("主页");
-        homeTab.setOnClickListener(v -> showHomePage());
+        setHapticClick(homeTab, v -> showHomePage());
         recordsTab = new Button(this);
         recordsTab.setText("测试记录");
-        recordsTab.setOnClickListener(v -> showRecordsPage());
+        setHapticClick(recordsTab, v -> showRecordsPage());
+        settingsTab = new Button(this);
+        settingsTab.setText("设置");
+        setHapticClick(settingsTab, v -> showSettingsPage());
         nav.addView(homeTab, navWeight());
         nav.addView(recordsTab, navWeight());
+        nav.addView(settingsTab, navWeight());
         shell.addView(nav, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(60)));
 
@@ -116,32 +149,33 @@ public class MainActivity extends Activity {
 
     private void showHomePage() {
         homeVisible = true;
-        setTabState(true);
+        currentPage = PAGE_HOME;
+        setTabState(PAGE_HOME);
         pageHost.removeAllViews();
 
         ScrollView scroll = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(8), dp(18), dp(28));
-        root.setBackgroundColor(Color.rgb(246, 247, 249));
+        root.setBackgroundColor(backgroundColor());
         scroll.addView(root);
 
-        TextView title = text("SteadyPower", 28, Color.rgb(25, 25, 28));
+        TextView title = text("SteadyPower", 28, primaryTextColor());
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         root.addView(title);
-        TextView subtitle = text("1 Hz 电池端功耗记录 · 不自动删峰 · 不自动判稳态", 13, Color.DKGRAY);
+        TextView subtitle = text("1 Hz 电池端功耗记录 · 不自动删峰 · 不自动判稳态", 13, secondaryTextColor());
         subtitle.setPadding(0, dp(4), 0, dp(18));
         root.addView(subtitle);
 
         LinearLayout hero = card();
-        valueText = text("-- W", 42, Color.rgb(20, 70, 145));
+        valueText = text("-- W", 42, accentColor());
         valueText.setGravity(Gravity.CENTER);
         valueText.setTypeface(null, android.graphics.Typeface.BOLD);
         hero.addView(valueText, matchWrap());
-        valueLabel = text("当前功耗", 14, Color.DKGRAY);
+        valueLabel = text("当前功耗", 14, secondaryTextColor());
         valueLabel.setGravity(Gravity.CENTER);
         hero.addView(valueLabel, matchWrap());
-        statusText = text("尚未开始测试", 13, Color.DKGRAY);
+        statusText = text("尚未开始测试", 13, secondaryTextColor());
         statusText.setGravity(Gravity.CENTER);
         statusText.setPadding(0, dp(8), 0, 0);
         hero.addView(statusText, matchWrap());
@@ -151,13 +185,13 @@ public class MainActivity extends Activity {
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         startButton = new Button(this);
         startButton.setText("开始测试");
-        startButton.setOnClickListener(v -> startTest());
+        setHapticClick(startButton, v -> startTest());
         stopButton = new Button(this);
         stopButton.setText("停止");
-        stopButton.setOnClickListener(v -> stopTest());
+        setHapticClick(stopButton, v -> stopTest());
         saveButton = new Button(this);
         saveButton.setText("保存记录");
-        saveButton.setOnClickListener(v -> showSaveDialog());
+        setHapticClick(saveButton, v -> showSaveDialog());
         buttons.addView(startButton, weight());
         buttons.addView(stopButton, weight());
         buttons.addView(saveButton, weight());
@@ -165,38 +199,40 @@ public class MainActivity extends Activity {
 
         exportButton = new Button(this);
         exportButton.setText("导出当前测试 CSV");
-        exportButton.setOnClickListener(v -> exportCsv());
+        setHapticClick(exportButton, v -> exportCsv());
         LinearLayout.LayoutParams exportParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
         exportParams.bottomMargin = dp(14);
         root.addView(exportButton, exportParams);
 
         LinearLayout statsCard = card();
-        TextView statsTitle = text("统计", 18, Color.rgb(30, 30, 34));
+        TextView statsTitle = text("统计", 18, primaryTextColor());
         statsTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         statsCard.addView(statsTitle);
-        statsText = text("暂无数据", 15, Color.DKGRAY);
+        statsText = text("暂无数据", 15, secondaryTextColor());
         statsText.setPadding(0, dp(10), 0, 0);
         statsCard.addView(statsText);
         root.addView(statsCard, matchWrapMarginBottom(14));
 
         LinearLayout curveCard = card();
-        TextView curveTitle = text("原始功耗曲线", 18, Color.rgb(30, 30, 34));
+        TextView curveTitle = text("原始功耗曲线", 18, primaryTextColor());
         curveTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         curveCard.addView(curveTitle);
         curveView = new PowerCurveView(this);
+        curveView.setDarkMode(darkMode);
         curveCard.addView(curveView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(240)));
         root.addView(curveCard, matchWrapMarginBottom(14));
 
         LinearLayout histCard = card();
-        TextView histTitle = text("功耗直方图", 18, Color.rgb(30, 30, 34));
+        TextView histTitle = text("功耗直方图", 18, primaryTextColor());
         histTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         histCard.addView(histTitle);
-        TextView histNote = text("固定每 0.05 W 一个区间；最高柱就是最常出现的功耗范围。", 12, Color.DKGRAY);
+        TextView histNote = text("固定每 0.05 W 一个区间；最高柱就是最常出现的功耗范围。", 12, secondaryTextColor());
         histNote.setPadding(0, dp(4), 0, dp(4));
         histCard.addView(histNote);
         histogramView = new PowerHistogramView(this);
+        histogramView.setDarkMode(darkMode);
         histCard.addView(histogramView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(270)));
         root.addView(histCard, matchWrapMarginBottom(14));
@@ -209,7 +245,7 @@ public class MainActivity extends Activity {
                 "• 保存记录会保存本次完整逐秒数据，可在“测试记录”中点开查看曲线和直方图。\n" +
                 "• 功率按 |电池电流| × 电池电压计算，属于电池端估算值。\n" +
                 "• 正在充电时，电池净电流不能直接代表整机耗电，不建议测试。",
-                13, Color.DKGRAY);
+                13, secondaryTextColor());
         noteCard.addView(note);
         root.addView(noteCard);
 
@@ -219,27 +255,28 @@ public class MainActivity extends Activity {
 
     private void showRecordsPage() {
         homeVisible = false;
-        setTabState(false);
+        currentPage = PAGE_RECORDS;
+        setTabState(PAGE_RECORDS);
         pageHost.removeAllViews();
 
         ScrollView scroll = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(8), dp(18), dp(28));
-        root.setBackgroundColor(Color.rgb(246, 247, 249));
+        root.setBackgroundColor(backgroundColor());
         scroll.addView(root);
 
-        TextView title = text("测试记录", 28, Color.rgb(25, 25, 28));
+        TextView title = text("测试记录", 28, primaryTextColor());
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         root.addView(title);
-        TextView subtitle = text("点击任意记录查看完整统计、曲线和功耗分布。", 13, Color.DKGRAY);
+        TextView subtitle = text("点击任意记录查看完整统计、曲线和功耗分布。", 13, secondaryTextColor());
         subtitle.setPadding(0, dp(4), 0, dp(18));
         root.addView(subtitle);
 
         List<RecordStore.Record> records = RecordStore.loadRecords(this);
         if (records.isEmpty()) {
             LinearLayout empty = card();
-            TextView e = text("还没有保存的测试记录。", 15, Color.DKGRAY);
+            TextView e = text("还没有保存的测试记录。", 15, secondaryTextColor());
             empty.addView(e);
             root.addView(empty);
         } else {
@@ -248,7 +285,7 @@ public class MainActivity extends Activity {
                 LinearLayout item = card();
                 item.setClickable(true);
                 item.setFocusable(true);
-                TextView itemTitle = text(record.displayTitle(), 17, Color.rgb(28, 28, 32));
+                TextView itemTitle = text(record.displayTitle(), 17, primaryTextColor());
                 itemTitle.setTypeface(null, android.graphics.Typeface.BOLD);
                 item.addView(itemTitle);
                 TextView summary = text(String.format(Locale.US,
@@ -257,10 +294,10 @@ public class MainActivity extends Activity {
                         record.durationSec / 60,
                         record.durationSec % 60,
                         fmt.format(new Date(record.savedAt))),
-                        13, Color.DKGRAY);
+                        13, secondaryTextColor());
                 summary.setPadding(0, dp(5), 0, 0);
                 item.addView(summary);
-                item.setOnClickListener(v -> showRecordDetail(record));
+                setHapticClick(item, v -> showRecordDetail(record));
                 root.addView(item, matchWrapMarginBottom(10));
             }
         }
@@ -270,7 +307,8 @@ public class MainActivity extends Activity {
 
     private void showRecordDetail(RecordStore.Record record) {
         homeVisible = false;
-        setTabState(false);
+        currentPage = PAGE_DETAIL;
+        setTabState(PAGE_RECORDS);
         pageHost.removeAllViews();
 
         List<PowerRepository.Sample> samples = RecordStore.loadSamples(this, record);
@@ -279,24 +317,24 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(8), dp(18), dp(28));
-        root.setBackgroundColor(Color.rgb(246, 247, 249));
+        root.setBackgroundColor(backgroundColor());
         scroll.addView(root);
 
         Button back = new Button(this);
         back.setText("← 返回测试记录");
-        back.setOnClickListener(v -> showRecordsPage());
+        setHapticClick(back, v -> showRecordsPage());
         root.addView(back, matchWrapMarginBottom(10));
 
-        TextView title = text(record.displayTitle(), 24, Color.rgb(25, 25, 28));
+        TextView title = text(record.displayTitle(), 24, primaryTextColor());
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         root.addView(title);
         TextView saved = text(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-                .format(new Date(record.savedAt)), 12, Color.DKGRAY);
+                .format(new Date(record.savedAt)), 12, secondaryTextColor());
         saved.setPadding(0, dp(4), 0, dp(16));
         root.addView(saved);
 
         LinearLayout statsCard = card();
-        TextView statsTitle = text("统计", 18, Color.rgb(30, 30, 34));
+        TextView statsTitle = text("统计", 18, primaryTextColor());
         statsTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         statsCard.addView(statsTitle);
         TextView detailStats = text(String.format(Locale.US,
@@ -307,26 +345,28 @@ public class MainActivity extends Activity {
                 "测试时长            %d:%02d",
                 record.median, record.mean, record.min, record.max,
                 record.count, record.durationSec / 60, record.durationSec % 60),
-                15, Color.DKGRAY);
+                15, secondaryTextColor());
         detailStats.setPadding(0, dp(10), 0, 0);
         statsCard.addView(detailStats);
         root.addView(statsCard, matchWrapMarginBottom(14));
 
         LinearLayout curveCard = card();
-        TextView curveTitle = text("原始功耗曲线", 18, Color.rgb(30, 30, 34));
+        TextView curveTitle = text("原始功耗曲线", 18, primaryTextColor());
         curveTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         curveCard.addView(curveTitle);
         PowerCurveView detailCurve = new PowerCurveView(this);
+        detailCurve.setDarkMode(darkMode);
         detailCurve.setData(samples);
         curveCard.addView(detailCurve, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(240)));
         root.addView(curveCard, matchWrapMarginBottom(14));
 
         LinearLayout histCard = card();
-        TextView histTitle = text("功耗直方图", 18, Color.rgb(30, 30, 34));
+        TextView histTitle = text("功耗直方图", 18, primaryTextColor());
         histTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         histCard.addView(histTitle);
         PowerHistogramView detailHist = new PowerHistogramView(this);
+        detailHist.setDarkMode(darkMode);
         detailHist.setData(samples);
         histCard.addView(detailHist, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(270)));
@@ -340,7 +380,7 @@ public class MainActivity extends Activity {
 
         Button delete = new Button(this);
         delete.setText("删除这条记录");
-        delete.setOnClickListener(v -> new AlertDialog.Builder(this)
+        setHapticClick(delete, v -> new AlertDialog.Builder(this)
                 .setTitle("删除记录")
                 .setMessage("删除后，这条记录及其完整曲线数据都会被移除。")
                 .setNegativeButton("取消", null)
@@ -355,23 +395,161 @@ public class MainActivity extends Activity {
         pageHost.addView(scroll);
     }
 
-    private void setTabState(boolean home) {
-        if (homeTab == null || recordsTab == null) return;
-        homeTab.setEnabled(!home);
-        recordsTab.setEnabled(home);
+    private void setTabState(int selectedPage) {
+        if (homeTab == null || recordsTab == null || settingsTab == null) return;
+        homeTab.setEnabled(selectedPage != PAGE_HOME);
+        recordsTab.setEnabled(selectedPage != PAGE_RECORDS);
+        settingsTab.setEnabled(selectedPage != PAGE_SETTINGS);
+    }
+
+    private void showSettingsPage() {
+        homeVisible = false;
+        currentPage = PAGE_SETTINGS;
+        setTabState(PAGE_SETTINGS);
+        pageHost.removeAllViews();
+
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18), dp(8), dp(18), dp(28));
+        root.setBackgroundColor(backgroundColor());
+        scroll.addView(root);
+
+        TextView title = text("设置", 28, primaryTextColor());
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        root.addView(title);
+        TextView subtitle = text("外观、震动、倒计时测试与版本更新。", 13, secondaryTextColor());
+        subtitle.setPadding(0, dp(4), 0, dp(18));
+        root.addView(subtitle);
+
+        LinearLayout basicCard = card();
+        TextView basicTitle = text("基础设置", 18, primaryTextColor());
+        basicTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        basicCard.addView(basicTitle);
+
+        Switch darkSwitch = new Switch(this);
+        darkSwitch.setText("夜间黑暗模式");
+        darkSwitch.setTextColor(primaryTextColor());
+        darkSwitch.setChecked(darkMode);
+        darkSwitch.setPadding(0, dp(8), 0, dp(4));
+        darkSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            if (checked == darkMode) return;
+            haptic(buttonView);
+            prefs.edit().putBoolean(KEY_DARK_MODE, checked).apply();
+            recreate();
+        });
+        basicCard.addView(darkSwitch, matchWrap());
+
+        Switch hapticSwitch = new Switch(this);
+        hapticSwitch.setText("点选震动反馈");
+        hapticSwitch.setTextColor(primaryTextColor());
+        hapticSwitch.setChecked(hapticsEnabled);
+        hapticSwitch.setPadding(0, dp(4), 0, 0);
+        hapticSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            if (checked == hapticsEnabled) return;
+            if (hapticsEnabled) buttonView.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
+            hapticsEnabled = checked;
+            prefs.edit().putBoolean(KEY_HAPTICS, checked).apply();
+        });
+        basicCard.addView(hapticSwitch, matchWrap());
+        root.addView(basicCard, matchWrapMarginBottom(14));
+
+        LinearLayout timerCard = card();
+        TextView timerTitle = text("倒计时测试", 18, primaryTextColor());
+        timerTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        timerCard.addView(timerTitle);
+        TextView timerNote = text(
+                "默认 3 分钟。开始后可直接切到循环视频；到点会自动停止测试并保存记录。",
+                13, secondaryTextColor());
+        timerNote.setPadding(0, dp(6), 0, dp(10));
+        timerCard.addView(timerNote);
+
+        EditText minutesInput = new EditText(this);
+        minutesInput.setSingleLine(true);
+        minutesInput.setHint("分钟");
+        minutesInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        minutesInput.setText(String.valueOf(prefs.getInt(KEY_COUNTDOWN_MINUTES, 3)));
+        timerCard.addView(minutesInput, matchWrap());
+
+        Button timedStart = new Button(this);
+        timedStart.setText("开始倒计时测试");
+        setHapticClick(timedStart, v -> startTimedTest(minutesInput));
+        timerCard.addView(timedStart, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
+        root.addView(timerCard, matchWrapMarginBottom(14));
+
+        LinearLayout updateCard = card();
+        TextView updateTitle = text("检查更新", 18, primaryTextColor());
+        updateTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        updateCard.addView(updateTitle);
+        TextView versionText = text("当前版本 v" + getCurrentVersionName()
+                        + " · 仅通过 GitHub Releases 检查与下载",
+                13, secondaryTextColor());
+        versionText.setPadding(0, dp(6), 0, dp(10));
+        updateCard.addView(versionText);
+
+        Button updateButton = new Button(this);
+        updateButton.setText("检查 GitHub 更新");
+        setHapticClick(updateButton, v -> checkForUpdates(updateButton));
+        updateCard.addView(updateButton, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
+        root.addView(updateCard);
+
+        pageHost.addView(scroll);
     }
 
     private void startTest() {
+        startSampling(0L, null);
+    }
+
+    private void startTimedTest(EditText minutesInput) {
+        if (PowerRepository.isRunning()) {
+            Toast.makeText(this, "已有测试正在进行，请先停止当前测试", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        int minutes;
+        try {
+            minutes = Integer.parseInt(minutesInput.getText().toString().trim());
+        } catch (Exception e) {
+            Toast.makeText(this, "请输入 1–120 分钟的整数", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (minutes < 1 || minutes > 120) {
+            Toast.makeText(this, "倒计时时间支持 1–120 分钟", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit().putInt(KEY_COUNTDOWN_MINUTES, minutes).apply();
+        long durationMs = minutes * 60_000L;
+        startSampling(durationMs, "倒计时测试 " + minutes + " 分钟");
+        showHomePage();
+    }
+
+    private void startSampling(long autoStopMs, String autoSaveName) {
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
         }
         Intent intent = new Intent(this, PowerSamplingService.class);
         intent.setAction(PowerSamplingService.ACTION_START);
+        if (autoStopMs > 0L) {
+            intent.putExtra(PowerSamplingService.EXTRA_AUTO_STOP_MS, autoStopMs);
+            intent.putExtra(PowerSamplingService.EXTRA_AUTO_SAVE_NAME, autoSaveName);
+        }
         try {
             currentRunSaved = false;
+            lastAutoSavedRecordId = 0L;
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent); else startService(intent);
-            Toast.makeText(this, "已开始，直接切到要测试的软件即可", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this,
+                    autoStopMs > 0L
+                            ? "倒计时测试已开始，到点会自动停止并保存"
+                            : "已开始，直接切到要测试的软件即可",
+                    Toast.LENGTH_SHORT).show();
             handler.postDelayed(this::updateUi, 250L);
         } catch (Exception e) {
             Toast.makeText(this, "启动失败：" + e.getClass().getSimpleName(), Toast.LENGTH_LONG).show();
@@ -388,6 +566,11 @@ public class MainActivity extends Activity {
         if (!homeVisible || valueText == null) return;
         List<PowerRepository.Sample> samples = PowerRepository.snapshot();
         boolean running = PowerRepository.isRunning();
+        long autoSavedRecordId = PowerRepository.getAutoSavedRecordId();
+        if (autoSavedRecordId != 0L) {
+            currentRunSaved = true;
+            lastAutoSavedRecordId = autoSavedRecordId;
+        }
         startButton.setEnabled(!running);
         stopButton.setEnabled(running);
         saveButton.setEnabled(!running && !samples.isEmpty() && !currentRunSaved);
@@ -403,26 +586,43 @@ public class MainActivity extends Activity {
         }
 
         String error = PowerRepository.getLastError();
+        long autoStopAt = PowerRepository.getAutoStopAtElapsedRealtime();
+        String countdown = autoStopAt > 0L ? formatCountdown(autoStopAt) : "";
         if (!error.isEmpty()) {
             statusText.setText(error);
-            statusText.setTextColor(Color.rgb(180, 55, 45));
+            statusText.setTextColor(Color.rgb(210, 85, 75));
         } else if (latest != null && latest.charging) {
-            statusText.setText("检测到正在充电：不建议把当前结果当作整机功耗");
-            statusText.setTextColor(Color.rgb(185, 90, 20));
+            statusText.setText("检测到正在充电：不建议把当前结果当作整机功耗"
+                    + (countdown.isEmpty() ? "" : "\n倒计时剩余 " + countdown));
+            statusText.setTextColor(Color.rgb(220, 145, 65));
         } else if (running) {
-            statusText.setText("正在后台 1 Hz 采样，可直接切换到目标软件");
-            statusText.setTextColor(Color.rgb(45, 115, 55));
+            statusText.setText(countdown.isEmpty()
+                    ? "正在后台 1 Hz 采样，可直接切换到目标软件"
+                    : "倒计时测试中 · 剩余 " + countdown + " · 可切换到目标软件");
+            statusText.setTextColor(Color.rgb(75, 155, 90));
+        } else if (autoSavedRecordId != 0L) {
+            String savedTitle = PowerRepository.getAutoSavedRecordTitle();
+            statusText.setText(savedTitle.isEmpty()
+                    ? "倒计时测试已完成 · 已自动保存"
+                    : "倒计时测试已完成 · 已自动保存：" + savedTitle);
+            statusText.setTextColor(secondaryTextColor());
         } else if (!samples.isEmpty()) {
             statusText.setText(currentRunSaved ? "测试已停止 · 已保存记录" : "测试已停止");
-            statusText.setTextColor(Color.DKGRAY);
+            statusText.setTextColor(secondaryTextColor());
         } else {
             statusText.setText("尚未开始测试");
-            statusText.setTextColor(Color.DKGRAY);
+            statusText.setTextColor(secondaryTextColor());
         }
 
         statsText.setText(buildStats(samples));
         curveView.setData(samples);
         histogramView.setData(samples);
+    }
+
+    private String formatCountdown(long autoStopAtElapsedRealtime) {
+        long remainingMs = Math.max(0L, autoStopAtElapsedRealtime - SystemClock.elapsedRealtime());
+        long sec = (remainingMs + 999L) / 1000L;
+        return String.format(Locale.US, "%d:%02d", sec / 60L, sec % 60L);
     }
 
     private String buildStats(List<PowerRepository.Sample> samples) {
@@ -539,11 +739,122 @@ public class MainActivity extends Activity {
         l.setOrientation(LinearLayout.VERTICAL);
         l.setPadding(dp(16), dp(16), dp(16), dp(16));
         android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-        bg.setColor(Color.WHITE);
+        bg.setColor(cardColor());
         bg.setCornerRadius(dp(14));
-        bg.setStroke(dp(1), Color.rgb(228, 229, 232));
+        bg.setStroke(dp(1), borderColor());
         l.setBackground(bg);
         return l;
+    }
+
+    private void setHapticClick(View view, View.OnClickListener listener) {
+        view.setOnClickListener(v -> {
+            haptic(v);
+            listener.onClick(v);
+        });
+    }
+
+    private void haptic(View view) {
+        if (hapticsEnabled && view != null) {
+            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
+        }
+    }
+
+    private int backgroundColor() {
+        return darkMode ? Color.rgb(18, 19, 22) : Color.rgb(246, 247, 249);
+    }
+
+    private int cardColor() {
+        return darkMode ? Color.rgb(31, 33, 37) : Color.WHITE;
+    }
+
+    private int borderColor() {
+        return darkMode ? Color.rgb(57, 60, 66) : Color.rgb(228, 229, 232);
+    }
+
+    private int primaryTextColor() {
+        return darkMode ? Color.rgb(242, 243, 245) : Color.rgb(25, 25, 28);
+    }
+
+    private int secondaryTextColor() {
+        return darkMode ? Color.rgb(185, 188, 195) : Color.DKGRAY;
+    }
+
+    private int accentColor() {
+        return darkMode ? Color.rgb(120, 177, 255) : Color.rgb(20, 70, 145);
+    }
+
+    private String getCurrentVersionName() {
+        try {
+            String version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            return version == null || version.trim().isEmpty() ? "0.0.0" : version;
+        } catch (Exception ignored) {
+            return "0.0.0";
+        }
+    }
+
+    private void checkForUpdates(Button button) {
+        button.setEnabled(false);
+        button.setText("检查中…");
+        String currentVersion = getCurrentVersionName();
+        UpdateChecker.check(currentVersion, new UpdateChecker.Callback() {
+            @Override
+            public void onResult(UpdateChecker.Result result) {
+                runOnUiThread(() -> {
+                    button.setEnabled(true);
+                    button.setText("检查 GitHub 更新");
+                    if (!result.hasUpdate) {
+                        Toast.makeText(MainActivity.this,
+                                "当前已是最新版本（v" + currentVersion + "）",
+                                Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("发现新版本 v" + result.latestVersion)
+                            .setMessage("将前往 GitHub Release 页面。你可以在 Assets 中点击 APK 下载，不在应用内执行更新。")
+                            .setNegativeButton("稍后", null)
+                            .setPositiveButton("前往 GitHub 下载", (dialog, which) ->
+                                    openReleasePage(result.releaseUrl))
+                            .show();
+                });
+            }
+
+            @Override
+            public void onError(Exception error) {
+                runOnUiThread(() -> {
+                    button.setEnabled(true);
+                    button.setText("检查 GitHub 更新");
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("检查更新失败")
+                            .setMessage("暂时无法连接 GitHub。核心测试功能不受影响，你也可以稍后再试。\n\n"
+                                    + error.getClass().getSimpleName())
+                            .setPositiveButton("知道了", null)
+                            .show();
+                });
+            }
+        });
+    }
+
+    private void openReleasePage(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(this, "无法打开浏览器", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (currentPage == PAGE_DETAIL) {
+            showRecordsPage();
+            return;
+        }
+        if (currentPage == PAGE_RECORDS || currentPage == PAGE_SETTINGS) {
+            showHomePage();
+            return;
+        }
+        super.onBackPressed();
     }
 
     private TextView text(String s, float sp, int color) {
