@@ -527,7 +527,7 @@ public class MainActivity extends Activity {
                 .edit().putInt(KEY_COUNTDOWN_MINUTES, minutes).apply();
         long durationMs = minutes * 60_000L;
         startSampling(durationMs, "倒计时测试 " + minutes + " 分钟");
-        if (PowerRepository.isRunning()) showHomePage();
+        showHomePage();
     }
 
     private void startSampling(long autoStopMs, String autoSaveName) {
