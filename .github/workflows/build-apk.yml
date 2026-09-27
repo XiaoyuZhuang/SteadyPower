@@ -3,7 +3,7 @@ name: Build SteadyPower APK
 on:
   workflow_dispatch:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "feature/settings-countdown-haptics-updates" ]
   pull_request:
     branches: [ "main" ]
   pull_request:
